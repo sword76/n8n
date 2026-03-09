@@ -1,0 +1,39 @@
+groups:
+  - name: n8n_alerts
+    rules:
+      - alert: N8NInstanceDown
+        expr: up{job="n8n"} == 0
+        for: 1m
+        annotations:
+          summary: "Instance {{ $labels.instance }} down"
+          description: "n8n instance {{ $labels.instance }} has been down for more than 1 minute."
+
+      - alert: HighCpuUsage
+        expr: rate(process_cpu_seconds_total{job="n8n"}[5m]) > 0.8
+        for: 5m
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is above 80% for 5 minutes."
+
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes{job="n8n"} > 1e9   # 1GB
+        for: 5m
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage exceeds 1GB."
+
+  - name: nginx_alerts
+    rules:
+      - alert: NginxDown
+        expr: nginx_up == 0
+        for: 1m
+        annotations:
+          summary: "Nginx is down"
+          description: "Nginx exporter cannot scrape nginx status."
+
+      - alert: HighHttp5xxRate
+        expr: rate(nginx_http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 2m
+        annotations:
+          summary: "High rate of 5xx errors"
+          description: "More than 0.1 5xx errors per second over 2 minutes."

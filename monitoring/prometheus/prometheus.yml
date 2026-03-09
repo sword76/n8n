@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+rule_files:
+  - "alerts.yml"
+
+scrape_configs:
+  - job_name: 'n8n'
+    static_configs:
+      - targets: ['n8n_instance_1:5678', 'n8n_instance_2:5678']
+    metrics_path: /metrics
+    # Если метрики требуют аутентификации, можно добавить basic_auth
+
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx-exporter:9113']   # порт по умолчанию для nginx-exporter
