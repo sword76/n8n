@@ -147,4 +147,8 @@ yc managed-postgresql cluster create `
   --deletion-protection
 ```
 
+<<<<<<< HEAD
 Пример с развертыванием в Docker можно найти в официальной [документации n8n](https://docs.n8n.io/hosting/installation/docker/#starting-n8n).
+=======
+Пример с развертыванием в Docker можно найти в официальной [документации n8n](https://docs.n8n.io/hosting/installation/docker/#starting-n8n).
+>>>>>>> origin/main
