@@ -62,7 +62,14 @@ COPY --from=python-installer /tmp/n8n-src/packages/@n8n/task-runner-python \
 
 USER node
 
-# Pre-install Apify community node
+# Pre-install community nodes that are recorded in the database
 RUN mkdir -p /home/node/.n8n/nodes && \
     cd /home/node/.n8n/nodes && \
-    npm install @apify/n8n-nodes-apify
+    npm install @apify/n8n-nodes-apify n8n-nodes-browserbase && \
+    # npm resolves n8n-workflow from the public registry (v1.82.0, last published).
+    # n8n 2.x ships n8n-workflow v2.x internally via pnpm but never publishes it to npm.
+    # Community nodes that use newer APIs (e.g. NodeConnectionTypes) fail at load time
+    # because they see the stale public version. Replace it with a symlink to n8n's own copy.
+    rm -rf node_modules/n8n-workflow && \
+    ln -s /usr/local/lib/node_modules/n8n/node_modules/n8n-workflow \
+          node_modules/n8n-workflow
