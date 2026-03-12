@@ -1,34 +1,26 @@
-# Project Hardware and Network Architecture
+# Аппаратная и сетевая архитектура проекта
 
-## 1. Overview
+## 1. Обзор
 
-This document outlines the hardware and network architecture for a resilient and scalable n8n deployment. The setup consists of two n8n server instances running in separate networks, a load balancer for traffic distribution and access management, and a centralized PostgreSQL database for data persistence. A monitoring and logging stack has been added to provide observability into the system.
+Данный документ описывает аппаратную и сетевую архитектуру для отказоустойчивого и масштабируемого развёртывания n8n. Конфигурация состоит из двух экземпляров сервера n8n за балансировщиком нагрузки NGINX, базы данных PostgreSQL, управляемой через Docker Compose, и стека мониторинга. Все сервисы используют единую мостовую сеть Docker (`n8n_network`), что обеспечивает прямое межконтейнерное взаимодействие по имени сервиса.
 
-## 2. Architecture Diagram
+## 2. Схема архитектуры
 
 ```mermaid
 graph TD
-    subgraph Internet
-        LB[Load Balancer]
+    subgraph "n8n_network (Docker bridge)"
+        LB["NGINX Load Balancer\n(port 80/443)"]
+        N8N1["n8n_instance_1\n(build: Dockerfile)\n(port 5678)"]
+        N8N2["n8n_instance_2\n(build: Dockerfile)\n(port 5678)"]
+        DB[("PostgreSQL:15\ncontainer: PostgreSQL\n(port 5432)")]
+
+        NginxExporter[nginx-exporter]
+        Prometheus["Prometheus\n(port 9090)"]
+        Grafana["Grafana\n(port 3000)"]
+        Alertmanager["Alertmanager\n(port 9093)"]
     end
 
-    subgraph "n8n Application Network"
-        N8N1[n8n Server 1]
-        N8N2[n8n Server 2]
-    end
-
-    subgraph "Database Network"
-        DB[(PostgreSQL Database)]
-    end
-
-    subgraph "Monitoring Network"
-        Prometheus[Prometheus]
-        Grafana[Grafana]
-        Loki[Loki]
-        Promtail[Promtail]
-        cAdvisor[cAdvisor]
-        PostgresExporter[Postgres Exporter]
-    end
+    Client([Client]) --> LB
 
     LB --> N8N1
     LB --> N8N2
@@ -36,57 +28,56 @@ graph TD
     N8N1 --> DB
     N8N2 --> DB
 
-    Prometheus -- Scrapes --> cAdvisor
-    Prometheus -- Scrapes --> PostgresExporter
-    Prometheus -- Scrapes --> N8N1
-    Prometheus -- Scrapes --> N8N2
+    NginxExporter -- scrapes stub_status --> LB
+    Prometheus -- scrapes --> NginxExporter
+    Prometheus -- scrapes /metrics --> N8N1
+    Prometheus -- scrapes /metrics --> N8N2
 
-    Promtail -- Ships logs to --> Loki
-
-    Grafana -- Queries --> Prometheus
-    Grafana -- Queries --> Loki
+    Grafana -- queries --> Prometheus
+    Grafana -- alerts --> Alertmanager
 ```
 
-## 3. Components
+## 3. Компоненты
 
-### 3.1. Load Balancer
+### 3.1. Балансировщик нагрузки
 
-*   **Purpose:** The load balancer is the single entry point for all incoming traffic to the n8n instances. It is responsible for:
-    *   **Traffic Distribution:** Distributing incoming requests across the two n8n servers to ensure high availability and load distribution.
-    *   **SSL/TLS Termination:** Offloading SSL/TLS encryption and decryption from the n8n servers.
-    *   **Access Management:** Can be configured with rules to control access to the n8n instances.
-*   **Technology:** This can be a cloud-based load balancer (e.g., AWS ELB, Google Cloud Load Balancing) or a self-hosted solution (e.g., NGINX, HAProxy).
+*   **Назначение:** Балансировщик нагрузки является единой точкой входа для всего входящего трафика к экземплярам n8n. Он отвечает за:
+    *   **Распределение трафика:** Распределение входящих запросов между двумя серверами n8n для обеспечения высокой доступности и балансировки нагрузки.
+    *   **Терминация SSL/TLS:** Разгрузка серверов n8n от операций шифрования и дешифрования SSL/TLS.
+    *   **Управление доступом:** Может быть настроен с правилами для контроля доступа к экземплярам n8n.
+*   **Технология:** Это может быть облачный балансировщик нагрузки (например, AWS ELB, Google Cloud Load Balancing) или самостоятельно размещённое решение (например, NGINX, HAProxy).
 
-### 3.2. n8n Servers
+### 3.2. Серверы n8n
 
-*   **Instances:** Two separate n8n server instances are deployed in different networks (Network A and Network B). This network separation provides redundancy; if one network goes down, the other n8n instance can still operate.
-*   **Configuration:** Each n8n server is configured to connect to the same central PostgreSQL database. This ensures that both instances share the same workflows, credentials, and execution data.
-*   **Execution:** The load balancer will route workflow executions to either of the n8n instances.
+*   **Экземпляры:** Два экземпляра сервера n8n (`n8n_instance_1`, `n8n_instance_2`) работают в одной сети `n8n_network`. NGINX распределяет запросы между ними с использованием алгоритма балансировки `least_conn`.
+*   **Пользовательский образ:** Оба экземпляра используют пользовательский `Dockerfile` (многоступенчатая сборка), который добавляет Python 3.12, пакет `@n8n/task-runner-python` и предустановленные узлы сообщества поверх защищённого базового образа `n8nio/n8n:latest`.
+*   **Общее состояние:** Оба экземпляра подключаются к одному контейнеру PostgreSQL. Рабочие процессы, учётные данные, журналы выполнения и пользовательские данные разделяются через базу данных.
+*   **Порядок запуска:** Директива `depends_on: condition: service_healthy` гарантирует, что n8n запускается только после того, как PostgreSQL успешно пройдёт проверку работоспособности `pg_isready`.
 
-### 3.3. PostgreSQL Database
+### 3.3. База данных PostgreSQL
 
-*   **Centralized Data Store:** A single PostgreSQL database is used as the central repository for all n8n data, including:
-    *   Workflows
-    *   Credentials
-    *   Execution logs
-    *   User data
-*   **High Availability:** For production environments, it is recommended to use a managed PostgreSQL service with high availability and automated backups (e.g., Amazon RDS, Google Cloud SQL).
-*   **Network Security:** The database should be in a secure network (Database Network) and only accessible from the n8n server instances.
+*   **Полное управление через Compose:** PostgreSQL работает как сервис Docker Compose (`postgres:15`, имя контейнера `PostgreSQL`) в сети `n8n_network`. Установка на хост-машину не требуется.
+*   **Сохранность данных:** Данные хранятся в именованном томе Docker (`postgres_data`). При миграции с контейнера, запущенного вручную, том может быть подключён как `external: true` для сохранения существующих данных.
+*   **Подключение:** n8n подключается к PostgreSQL, используя имя контейнера `PostgreSQL` в качестве имени хоста (DNS-разрешение Docker внутри `n8n_network`). Пул соединений настроен с параметром `DB_POSTGRESDB_POOL_SIZE=10`.
 
-### 3.4. Monitoring & Logging
+### 3.4. Мониторинг и логирование
 
-*   **Prometheus:** A monitoring system that collects and stores metrics from various sources, including cAdvisor and Postgres Exporter.
-*   **Grafana:** A visualization tool that allows you to create dashboards to monitor the metrics collected by Prometheus and logs from Loki.
-*   **Loki:** A log aggregation system designed to store and query logs from all services.
-*   **Promtail:** An agent that ships logs from the Docker containers to Loki.
-*   **cAdvisor:** A tool that provides container-level resource usage and performance metrics.
-*   **Postgres Exporter:** A tool that exports PostgreSQL metrics for Prometheus to scrape.
+*   **Prometheus:** Система мониторинга, которая собирает и хранит метрики из различных источников, включая cAdvisor и Postgres Exporter.
+*   **Grafana:** Инструмент визуализации, позволяющий создавать дашборды для мониторинга метрик, собранных Prometheus, и логов из Loki.
+*   **Loki:** Система агрегации логов, предназначенная для хранения и запроса логов со всех сервисов.
+*   **Promtail:** Агент, который отправляет логи из контейнеров Docker в Loki.
+*   **cAdvisor:** Инструмент, предоставляющий метрики использования ресурсов и производительности на уровне контейнеров.
+*   **Postgres Exporter:** Инструмент, экспортирующий метрики PostgreSQL для сбора Prometheus.
 
-## 4. Network Configuration
+## 4. Сетевая конфигурация
 
-*   **n8n Application Network:** This network contains the n8n server instances and the load balancer.
-*   **Database Network:** This network is firewalled to only allow connections from the IP addresses of the n8n servers and the Postgres Exporter.
-*   **Monitoring Network:** This network contains all the monitoring and logging services. It has access to the other networks to collect metrics and logs.
-*   **Load Balancer Network:** The load balancer resides in a public-facing network to accept traffic from the internet.
+*   **Единая мостовая сеть `n8n_network`:** Все сервисы (PostgreSQL, экземпляры n8n, NGINX, стек мониторинга) используют одну мостовую сеть Docker. Это обеспечивает межконтейнерное взаимодействие с использованием имён сервисов в качестве DNS-имён хостов (например, `PostgreSQL:5432`, `n8n1:5678`).
+*   **Проброшенные порты (хост → контейнер):**
+    - `80:80`, `443:443` — NGINX (публичный доступ)
+    - `9090:9090` — Prometheus
+    - `3000:3000` — Grafana
+    - `9093:9093` — Alertmanager
+    - `5432:5432` — PostgreSQL (опциональный доступ с хоста для инструментов администрирования)
+*   **Усиление безопасности для продакшена:** Для продакшен-среды рекомендуется выделить базу данных в отдельную сеть с ограниченным доступом или использовать управляемый сервис PostgreSQL (например, Yandex Cloud Managed PostgreSQL, Amazon RDS).
 
-This architecture ensures that the n8n service is highly available and resilient to failures in a single server or network, and provides a comprehensive monitoring and logging solution.
+Данная архитектура обеспечивает высокую доступность за счёт двух экземпляров n8n с общим персистентным состоянием и предоставляет полноценный стек наблюдаемости через Prometheus, Grafana и Alertmanager.

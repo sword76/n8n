@@ -1,4 +1,24 @@
 services:
+  postgres:
+    image: postgres:15
+    container_name: PostgreSQL
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-pguser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-pgdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pguser}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - n8n_network
+
   n8n1:
     build: .
     container_name: n8n_instance_1
@@ -23,6 +43,9 @@ services:
       - DB_POSTGRESDB_CONNECTION_TIMEOUT=30000
       - DB_POSTGRESDB_ACQUIRE_CONNECTION_TIMEOUT=60000
       - N8N_DIAGNOSTICS_ENABLED=false
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5678/healthz"]
       interval: 30s
@@ -55,6 +78,9 @@ services:
       - DB_POSTGRESDB_CONNECTION_TIMEOUT=30000
       - DB_POSTGRESDB_ACQUIRE_CONNECTION_TIMEOUT=60000
       - N8N_DIAGNOSTICS_ENABLED=false
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5678/healthz"]
       interval: 30s
@@ -149,6 +175,11 @@ services:
       - n8n_network
 
 volumes:
+  # External reference preserves the existing PostgreSQL data volume
+  # (originally an anonymous volume from the manually-run container)
+  postgres_data:
+    external: true
+    name: 95fdc3e116e49d599b313c6ff750042ba1f39cd0f3ffebc824824c9e929dec9c
   prometheus_data:
   grafana_data:
   alertmanager_data:

@@ -18,9 +18,10 @@ cp .env.template .env
 Затем отредактировать `.env` и заполнить:
 
 ```bash
-# Database
-POSTGRES_USER=postgres
+# Database (PostgreSQL управляется Docker Compose)
+POSTGRES_USER=pguser
 POSTGRES_PASSWORD=YOUR_STRONG_PASSWORD
+POSTGRES_DB=pgdb
 
 # Grafana
 GRAFANA_ADMIN_USER=admin
@@ -78,19 +79,13 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 # 1. Убедитесь, что .env файл создан и заполнен
 cat .env
 
-# 2. Убедитесь, что PostgreSQL запущен на хосте (port 5432)
-# Проверить:
-# sudo systemctl status postgresql
-# или
-# pg_isready -h localhost -p 5432
-
-# 3. Запустить все сервисы
+# 2. Запустить все сервисы (PostgreSQL запустится автоматически)
 docker-compose up -d
 
-# 4. Проверить статус
+# 3. Проверить статус
 docker-compose ps
 
-# 5. Посмотреть логи
+# 4. Посмотреть логи
 docker-compose logs -f
 ```
 
@@ -128,8 +123,11 @@ curl http://localhost:9093/-/healthy
 docker-compose logs n8n1
 docker-compose logs n8n2
 
-# Проверить подключение к БД
-docker exec -it n8n_instance_1 sh -c "nc -zv host.docker.internal 5432"
+# Проверить подключение к БД (PostgreSQL — контейнер "PostgreSQL" в той же сети)
+docker exec -it n8n_instance_1 sh -c "nc -zv PostgreSQL 5432"
+
+# Проверить состояние контейнера PostgreSQL
+docker-compose logs postgres
 ```
 
 ### Если nginx не работает:
@@ -154,10 +152,10 @@ docker exec -it n8n_instance_1 sh -c "ping -c 2 n8n2"
 
 ## ⚠️ Важные замечания:
 
-1. **PostgreSQL должен быть установлен и запущен на хосте** (не в Docker)
-   - Порт: 5432
-   - База данных: `n8n` (будет создана n8n автоматически)
-   - Пользователь: из .env
+1. **PostgreSQL управляется Docker Compose** — отдельная установка на хосте не нужна
+   - Контейнер: `PostgreSQL`, порт: `5432`
+   - n8n подключается по имени контейнера внутри сети `n8n_network`
+   - Данные хранятся в именованном volume `postgres_data`
 
 2. **N8N_ENCRYPTION_KEY** - КРИТИЧЕСКИ ВАЖЕН!
    - Храните его в безопасности

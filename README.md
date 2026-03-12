@@ -52,52 +52,57 @@
 - Docker (версия 20.10+)
 - Docker Compose (версия 2.x)
 
-Создайте файл `docker-compose.yml` со следующим содержимым (ключевые сервисы: n8n1, n8n2, nginx):
+Используется файл `docker-compose.yml`, уже включённый в репозиторий. Ключевые особенности текущей конфигурации (ключевые сервисы: postgres, n8n1, n8n2, nginx):
 
 ```yaml
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15
-    container_name: n8n_postgres
+    container_name: PostgreSQL
     restart: unless-stopped
     environment:
-      - POSTGRES_DB=n8n
-      - POSTGRES_USER=n8n_user
-      - POSTGRES_PASSWORD=your_local_password
+      - POSTGRES_USER=${POSTGRES_USER:-pguser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-pgdb}
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U n8n_user -d n8n"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pguser}"]
+      interval: 10s
+      timeout: 5s
       retries: 5
     networks:
       - n8n_network
 
   n8n1:
-    image: n8nio/n8n:latest
+    build: .          # Кастомный Dockerfile: Python task runner + community nodes
     container_name: n8n_instance_1
     restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
       - DB_TYPE=postgresdb
-      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_HOST=PostgreSQL   # DNS-имя контейнера в сети
       - DB_POSTGRESDB_PORT=5432
       - DB_POSTGRESDB_DATABASE=n8n
-      - DB_POSTGRESDB_USER=n8n_user
-      - DB_POSTGRESDB_PASSWORD=your_local_password
+      - DB_POSTGRESDB_USER=${POSTGRES_USER:-pguser}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
       - N8N_HOST=0.0.0.0
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
       - WEBHOOK_URL=http://localhost:80
       - GENERIC_TIMEZONE=Europe/Moscow
       - N8N_METRICS=true
-    volumes:
-      - n8n_data1:/home/node/.n8n
+      - N8N_PROXY_HOPS=1                # Количество доверенных proxy-хопов (nginx)
+      - N8N_COMMUNITY_PACKAGES_ENABLED=true
+      - DB_POSTGRESDB_POOL_SIZE=10
+      - DB_POSTGRESDB_CONNECTION_TIMEOUT=30000
+      - DB_POSTGRESDB_ACQUIRE_CONNECTION_TIMEOUT=60000
+      - N8N_DIAGNOSTICS_ENABLED=false   # Отключить Rudder analytics (блокирует event loop)
+    depends_on:
+      postgres:
+        condition: service_healthy      # Запуск только после готовности PostgreSQL
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5678/healthz"]
       interval: 30s
@@ -106,44 +111,18 @@ services:
     networks:
       - n8n_network
 
-  n8n2:
-    image: n8nio/n8n:latest
-    container_name: n8n_instance_2
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - DB_TYPE=postgresdb
-      - DB_POSTGRESDB_HOST=postgres
-      - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=n8n
-      - DB_POSTGRESDB_USER=n8n_user
-      - DB_POSTGRESDB_PASSWORD=your_local_password
-      - N8N_HOST=0.0.0.0
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-      - WEBHOOK_URL=http://localhost:80
-      - GENERIC_TIMEZONE=Europe/Moscow
-      - N8N_METRICS=true
-    volumes:
-      - n8n_data2:/home/node/.n8n
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5678/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - n8n_network
+  # n8n2 — идентичная конфигурация
 
   nginx:
     image: nginx:alpine
-    container_name: n8n_nginx_lb
+    container_name: n8n_nginx_load_balancer
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/ssl:/etc/nginx/ssl
     depends_on:
       - n8n1
       - n8n2
@@ -151,9 +130,12 @@ services:
       - n8n_network
 
 volumes:
-  pg_data:
-  n8n_data1:
-  n8n_data2:
+  postgres_data:
+    external: true    # Ссылка на существующий именованный volume с данными
+    name: <volume-hash>
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
 
 networks:
   n8n_network:
@@ -686,7 +668,7 @@ BUCKET="n8n-backups"
 mkdir -p $BACKUP_DIR
 
 # Бэкап БД
-docker exec n8n_postgres pg_dump -U n8n_user n8n > $BACKUP_DIR/n8n_db_$DATE.sql
+docker exec PostgreSQL pg_dump -U ${POSTGRES_USER:-pguser} n8n > $BACKUP_DIR/n8n_db_$DATE.sql
 
 # Бэкап конфигураций
 tar -czf $BACKUP_DIR/n8n_configs_$DATE.tar.gz /home/ubuntu/n8n-stack/config/
@@ -804,7 +786,7 @@ docker-compose logs -f
 docker-compose down
 
 # Подключение к БД
-docker exec -it n8n_postgres psql -U n8n_user -d n8n
+docker exec -it PostgreSQL psql -U ${POSTGRES_USER:-pguser} -d n8n
 
 # Применение Terraform
 cd terraform && terraform apply

@@ -21,19 +21,14 @@ docker-compose up -d
 
 ## ⚠️ Важные требования:
 
-1. **PostgreSQL должен быть запущен на хосте:**
-   ```bash
-   # Проверить
-   pg_isready -h localhost -p 5432
-
-   # Создать базу данных (если еще не создана)
-   createdb n8n
-   ```
-
-2. **Заполнить .env файл:**
-   - `POSTGRES_PASSWORD` - пароль от PostgreSQL
+1. **Заполнить .env файл:**
+   - `POSTGRES_USER` - имя пользователя PostgreSQL (например, `pguser`)
+   - `POSTGRES_PASSWORD` - пароль PostgreSQL
+   - `POSTGRES_DB` - имя базы данных (например, `pgdb`)
    - `N8N_ENCRYPTION_KEY` - сгенерировать с помощью `openssl rand -base64 32`
    - `GRAFANA_ADMIN_PASSWORD` - пароль для Grafana
+
+   > **Примечание:** PostgreSQL теперь полностью управляется Docker Compose — отдельная установка на хосте не требуется.
 
 ## 📊 После запуска доступны:
 
