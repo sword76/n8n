@@ -62,6 +62,7 @@ logs/
 # Database
 *.db
 *.sqlite
+*.sql
 
 # Locals for n8n
 en.json

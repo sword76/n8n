@@ -175,11 +175,7 @@ services:
       - n8n_network
 
 volumes:
-  # External reference preserves the existing PostgreSQL data volume
-  # (originally an anonymous volume from the manually-run container)
   postgres_data:
-    external: true
-    name: 95fdc3e116e49d599b313c6ff750042ba1f39cd0f3ffebc824824c9e929dec9c
   prometheus_data:
   grafana_data:
   alertmanager_data:
