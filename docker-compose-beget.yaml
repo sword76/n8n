@@ -1,0 +1,118 @@
+volumes:
+  traefik_data:
+    driver: local-persist
+    driver_opts:
+      mountpoint: /opt/beget/n8n/traefik_data
+  n8n_storage:
+    driver: local-persist
+    driver_opts:
+      mountpoint: /opt/beget/n8n/n8n_storage
+  db_storage:
+    driver: local-persist
+    driver_opts:
+      mountpoint: /opt/beget/n8n/db_storage
+  redis_storage:
+    driver: local-persist
+    driver_opts:
+      mountpoint: /opt/beget/n8n/redis_storage
+
+x-shared: &shared
+  restart: always
+  image: docker.n8n.io/n8nio/n8n:2.9.4
+  env_file: .env
+  links:
+    - postgres
+    - redis
+  volumes:
+    - n8n_storage:/home/node/.n8n
+    - ./healthcheck.js:/healthcheck.js
+  depends_on:
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+services:
+  traefik:
+    image: traefik:3.6.5
+    restart: always
+    command:
+      - "--api=true"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.mytlschallenge.acme.tlschallenge=true"
+      - "--certificatesresolvers.mytlschallenge.acme.email=schirva@mail.ru"
+      - "--certificatesresolvers.mytlschallenge.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - traefik_data:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  postgres:
+    image: postgres:16
+    restart: always
+    env_file: .env
+    volumes:
+      - db_storage:/var/lib/postgresql/data
+      - ./init-data.sh:/docker-entrypoint-initdb.d/init-data.sh
+    ports:
+      - 127.0.0.1:5432:5432
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:6-alpine
+    restart: always
+    volumes:
+      - redis_storage:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  n8n:
+    <<: *shared
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.n8n.rule=Host(`sikiguysatbrif.beget.app`)
+      - traefik.http.routers.n8n.tls=true
+      - traefik.http.routers.n8n.entrypoints=web,websecure
+      - traefik.http.routers.n8n.tls.certresolver=mytlschallenge
+      - traefik.http.middlewares.n8n.headers.SSLRedirect=true
+      - traefik.http.middlewares.n8n.headers.STSSeconds=315360000
+      - traefik.http.middlewares.n8n.headers.browserXSSFilter=true
+      - traefik.http.middlewares.n8n.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.n8n.headers.forceSTSHeader=true
+      - traefik.http.middlewares.n8n.headers.SSLHost=sikiguysatbrif.beget.app
+      - traefik.http.middlewares.n8n.headers.STSIncludeSubdomains=true
+      - traefik.http.middlewares.n8n.headers.STSPreload=true
+      - traefik.http.routers.n8n.middlewares=n8n@docker
+    ports:
+      - 127.0.0.1:5678:5678
+    healthcheck:
+      test: ["CMD", "node", "/healthcheck.js"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  n8n-worker:
+    <<: *shared
+    command: worker
+    depends_on:
+      - n8n
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:5678/healthz || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
