@@ -63,7 +63,3 @@ logs/
 *.db
 *.sqlite
 *.sql
-
-# Locals for n8n
-en.json
-ru.json
